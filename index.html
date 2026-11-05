@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- replace PENDING_UUID_AFTER_SUBMIT after website submit -->
+  <meta name="squeekchain-project" content="PENDING_UUID_AFTER_SUBMIT" />
+  <meta name="description" content="Squeek Call — RUNNING/IDLE calls settled against the live Squeekchain status feed." />
+  <title>Squeek Call</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">live Sepolia feed · unofficial</p>
+        <h1>Squeek Call</h1>
+        <p class="lede">
+          Pick <strong>RUNNING</strong> or <strong>IDLE</strong>. Twelve seconds later
+          we re-fetch <code>api.squeekchain.com/v1/status</code> and score you off
+          <code>measurement.coreStatus</code>.
+        </p>
+      </div>
+      <div class="wheel-card" aria-label="Live wheel">
+        <canvas id="wheel" width="220" height="220" role="img" aria-label="Wheel driven by live RPM"></canvas>
+        <p class="wheel-caption"><span id="wheelLabel">…</span></p>
+      </div>
+    </header>
+
+    <section class="panel live" aria-labelledby="live-title">
+      <div class="panel-head">
+        <h2 id="live-title">Live feed</h2>
+        <p class="poll-note">~3s poll · settle uses a fresh fetch</p>
+      </div>
+      <dl class="stats">
+        <div><dt>Core</dt><dd id="coreStatus">…</dd></div>
+        <div><dt>RPM</dt><dd id="rpm">…</dd></div>
+        <div><dt>Work units</dt><dd id="work">…</dd></div>
+        <div><dt>Block height</dt><dd id="height">…</dd></div>
+        <div><dt>Distance</dt><dd id="distance">…</dd></div>
+        <div><dt>Freshness</dt><dd id="fresh">…</dd></div>
+        <div><dt>Settled round</dt><dd id="settledRound">…</dd></div>
+        <div><dt>Observed</dt><dd id="observed">…</dd></div>
+      </dl>
+      <div class="pulse-wrap">
+        <p class="pulse-label">Status pulse <span id="pulseMeta"></span></p>
+        <canvas id="pulse" width="680" height="48" aria-label="Recent core status samples"></canvas>
+      </div>
+      <p id="feedError" class="error" hidden></p>
+    </section>
+
+    <section class="panel game" aria-labelledby="game-title">
+      <div class="panel-head">
+        <h2 id="game-title">Make a call</h2>
+        <p class="poll-note"><kbd>R</kbd> running · <kbd>I</kbd> idle</p>
+      </div>
+
+      <div class="scoreboard" aria-live="polite">
+        <div><span class="k">Score</span><strong id="score">0</strong></div>
+        <div><span class="k">Streak</span><strong id="streak">0</strong></div>
+        <div><span class="k">Rounds</span><strong id="rounds">0</strong></div>
+        <div><span class="k">Accuracy</span><strong id="accuracy">—</strong></div>
+        <div><span class="k">Best streak</span><strong id="best">0</strong></div>
+        <div><span class="k">vs coin-flip</span><strong id="edge">—</strong></div>
+      </div>
+
+      <p id="phase" class="phase">Pick RUNNING or IDLE. Clock runs 12s, then we settle on a fresh status pull.</p>
+      <div class="timer" aria-live="polite"><span id="countdown">—</span></div>
+
+      <div class="actions">
+        <button type="button" id="btnRun" class="call run">Call RUNNING</button>
+        <button type="button" id="btnIdle" class="call idle">Call IDLE</button>
+        <button type="button" id="btnAgain" class="again" hidden>Next call</button>
+      </div>
+      <p id="result" class="result" role="status"></p>
+    </section>
+
+    <div class="split">
+      <section class="panel history" aria-labelledby="hist-title">
+        <h2 id="hist-title">Call log</h2>
+        <ol id="history"></ol>
+        <p class="empty-hint" id="histEmpty">Nothing yet. Feed above is live either way.</p>
+      </section>
+
+      <section class="panel settlements" aria-labelledby="set-title">
+        <div class="panel-head">
+          <h2 id="set-title">On-chain settlements</h2>
+          <p class="poll-note">/v1/settlements</p>
+        </div>
+        <ul id="settlements"></ul>
+        <p id="setError" class="error" hidden></p>
+      </section>
+    </div>
+
+    <section class="panel tonight" aria-labelledby="tonight-title">
+      <div class="panel-head">
+        <h2 id="tonight-title">Lifetime so far</h2>
+        <p class="poll-note">/v1/measurement/stats · 7d</p>
+      </div>
+      <dl class="stats compact">
+        <div><dt>Accepted work</dt><dd id="lifeWork">…</dd></div>
+        <div><dt>Settled blocks</dt><dd id="lifeBlocks">…</dd></div>
+        <div><dt>Settlements</dt><dd id="lifeSets">…</dd></div>
+        <div><dt>Distance (m)</dt><dd id="lifeDist">…</dd></div>
+        <div><dt>Active days</dt><dd id="lifeDays">…</dd></div>
+        <div><dt>First seen</dt><dd id="lifeFirst">…</dd></div>
+      </dl>
+    </section>
+
+    <details class="panel howto">
+      <summary>How a round settles</summary>
+      <ol>
+        <li>You lock RUNNING or IDLE. Clock starts at 12.</li>
+        <li>Live panel keeps polling; wheel follows <code>rpmMilli</code>. Useful for vibes, not for the score.</li>
+        <li>At zero: one more <code>GET /v1/status</code>. <code>measurement.coreStatus</code> is the answer.</li>
+        <li>Hit/miss scored in the browser. Score + log in <code>localStorage</code>.</li>
+      </ol>
+      <p>
+        Unofficial page for <a href="https://squeekchain.com" rel="noopener">Squeekchain</a>.
+        Not affiliated.
+        <code>0x09d56b200b8B4f9d1CE9fa6D9dEF43f3D730B010</code>
+        · <a href="https://x.com/bangbangying" rel="noopener">@bangbangying</a>
+      </p>
+    </details>
+
+    <footer>
+      <p>MIT. See repo README for run notes + attribution placeholder.</p>
+    </footer>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
