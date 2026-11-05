@@ -6,7 +6,7 @@ The chain's rounds are 600 seconds and show up on the settlements copy. This boo
 [@bangbangying](https://x.com/bangbangying) · `0x09d56b200b8B4f9d1CE9fa6D9dEF43f3D730B010`
 
 ```
-squeekchain-project: PENDING_UUID_AFTER_SUBMIT
+squeekchain-project: 54197c12-6e05-49d4-aa33-dbb24a0ffe9f
 ```
 
 ## Play
