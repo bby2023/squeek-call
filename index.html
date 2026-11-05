@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <!-- replace PENDING_UUID_AFTER_SUBMIT after website submit -->
   <meta name="squeekchain-project" content="PENDING_UUID_AFTER_SUBMIT" />
-  <meta name="description" content="Squeek Call — call RUNNING or IDLE. Twelve seconds later one live status reading settles the slip." />
+  <meta name="description" content="Squeek Call — a 12-second house-chip book. Call RUNNING or IDLE. One fresh status reading settles the slip." />
   <meta name="theme-color" content="#14100c" />
   <title>Squeek Call</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
@@ -19,8 +19,9 @@
   <main class="wrap">
     <header class="top">
       <div class="brand">
-        <p class="eyebrow">House chips · this browser</p>
+        <p class="eyebrow">Twelve-second call book</p>
         <h1>Squeek Call</h1>
+        <p id="deskLine" class="desk-line">Unsigned book on this browser.</p>
       </div>
       <div class="rail">
         <p class="stack"><span id="bank">1,000</span> <span class="unit">chips</span></p>
@@ -29,6 +30,7 @@
         <p id="best" class="best" hidden></p>
         <button type="button" id="btnBank">Bank streak</button>
         <button type="button" id="btnMute" aria-pressed="true">Sound on</button>
+        <button type="button" id="btnDesk" aria-pressed="false">Sign the desk</button>
       </div>
     </header>
     <p id="clerk" class="clerk" aria-live="polite">Waiting on the wheel.</p>
@@ -78,6 +80,18 @@
       <button type="button" id="btnReopen" class="reopen" hidden>Open a new book</button>
     </section>
 
+    <section class="wire" id="wire" aria-labelledby="wire-title">
+      <div class="wire-head">
+        <h2 id="wire-title">Clerk's copies</h2>
+        <p>The slip settles on one fresh <code>GET /v1/status</code>. These other reads stay on the desk beside the book.</p>
+      </div>
+      <div class="wire-grid">
+        <article id="wireSettle" class="ticket" aria-live="polite"></article>
+        <article id="wireStats" class="ticket" aria-live="polite"></article>
+        <article id="wireAccount" class="ticket" aria-live="polite"></article>
+      </div>
+    </section>
+
     <section class="book" id="book" aria-labelledby="book-title">
       <div class="book-head">
         <h2 id="book-title">The book</h2>
@@ -89,12 +103,13 @@
     <details class="fine">
       <summary>How a slip settles</summary>
       <div class="fine-body">
-        <p>You call RUNNING or IDLE. The stake leaves the stack for 12 seconds. At the clock the page fetches <code>GET https://api.squeekchain.com/v1/status</code> with no query string and reads <code>measurement.coreStatus</code>.</p>
-        <p>ACTIVE and RUNNING count as a RUNNING call. IDLE counts as IDLE. <code>COUNTER_FAULT</code>, a missing measurement, or a failed fetch returns the stake and does not change the streak. The poll that spins the wheel is a different request. It never settles a slip.</p>
-        <p>Price, before the streak: over the last 12 distinct readings, a side pays 1.1× plus 2.9× the other side's share. Under four readings both sides pay 1.5×. Streak multiplies that price by ×1, ×1.3, ×1.6, ×2, then ×2.5, and the combined rate caps at 6×. The rate freezes on the slip. Returned chips are the stake times the locked rate, rounded. Exact rounding is in <code>rules.js</code>.</p>
+        <p>You call RUNNING or IDLE. The stake leaves the stack for 12 seconds of wall time. At the clock the page fetches <code>GET https://api.squeekchain.com/v1/status</code> with no query string and reads <code>measurement.coreStatus</code>.</p>
+        <p>ACTIVE and RUNNING count as a RUNNING call. IDLE counts as IDLE. <code>COUNTER_FAULT</code>, a missing measurement, or a failed fetch returns the stake and leaves the streak alone. The poll that spins the wheel is a different request of the same status URL. It never settles a slip. <code>GET /v1/settlements?range=24h</code>, <code>GET /v1/measurement/stats?range=7d</code>, and <code>GET /v1/accounts/{address}?limit=1</code> are the clerk's copies. A slip can quote them. They do not set the side or the price.</p>
+        <p>Price, before the streak: over the last 12 distinct readings, a side pays 1.1× plus 2.9× the other side's share. The same <code>observedAt</code> is one reading. Under four readings both sides pay 1.5×. Streak multiplies that price by ×1, ×1.3, ×1.6, ×2, then ×2.5, and the combined rate caps at 6×. The rate freezes on the slip. Returned chips are the stake times the locked rate, rounded. Exact rounding is in <code>rules.js</code>.</p>
         <p>A miss resets the streak. Banking the streak keeps the chips and sets the multiplier back to ×1. A fresh book is 1,000 chips, and only opens when the stack is empty. The old slips stay.</p>
+        <p>Chain rounds in the measurement window are <code>window.roundSeconds</code> (600 on the public feed). That is the chain's round. This book's clock is 12 seconds, and the side is <code>coreStatus</code> at the end of those 12 seconds.</p>
         <p>Anchor height on a slip is <code>builder.anchor.blockHeight</code>, the settled frontier. Projected blocks are not used. RPM is <code>measurement.rpmMilli</code>.</p>
-        <p>Chips live in <code>localStorage</code> under <code>squeek-call-v2</code>. They are a score on this machine. The page does not connect a wallet, sign a message, or send a transaction.</p>
+        <p>Sign the desk with an Ethereum wallet on Sepolia (chain 11155111). The wallet signs an EIP-4361 message. This page recovers the signer locally and opens that address's chip stack. The guest stack stays under <code>squeek-call-v2</code>. A signed stack is <code>squeek-call-v3:</code> plus the address. The signature proves the key signed in on this host. It does not send a transaction, move SQK, or stake the chips. Clearing site data clears the books. There is no Squeek Call contract.</p>
         <p>
           Unofficial page for <a href="https://squeekchain.com" rel="noopener">Squeekchain</a>.
           Not affiliated.
@@ -106,11 +121,12 @@
     </details>
 
     <footer>
-      <p>MIT. House chips only. Clearing site data clears the book.</p>
+      <p>MIT. House chips in this browser. A signed session names the stack. Clearing site data clears the books.</p>
     </footer>
   </main>
   <noscript><p class="clerk noscript">Squeek Call needs JavaScript for the clock and the status fetch.</p></noscript>
   <script src="rules.js"></script>
+  <script src="recover.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

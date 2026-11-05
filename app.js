@@ -1,4 +1,6 @@
-/* Squeek Call — the table. Settlement is always a fresh GET of rules.STATUS_URL. */
+/* Squeek Call — the table.
+   A slip settles on a fresh GET of rules.STATUS_URL only.
+   The wheel poll, the settlements copy, the 7-day stats, and the account read never settle. */
 (() => {
   const R = window.SqueekCallRules;
   if (!R) return;
@@ -11,6 +13,8 @@
     best: document.getElementById("best"),
     btnBank: document.getElementById("btnBank"),
     btnMute: document.getElementById("btnMute"),
+    btnDesk: document.getElementById("btnDesk"),
+    deskLine: document.getElementById("deskLine"),
     clerk: document.getElementById("clerk"),
     btnRun: document.getElementById("btnRun"),
     btnIdle: document.getElementById("btnIdle"),
@@ -31,6 +35,9 @@
     btnReopen: document.getElementById("btnReopen"),
     bookMeta: document.getElementById("bookMeta"),
     log: document.getElementById("log"),
+    wireSettle: document.getElementById("wireSettle"),
+    wireStats: document.getElementById("wireStats"),
+    wireAccount: document.getElementById("wireAccount"),
   };
   Object.entries(els).forEach(([key, node]) => {
     if (!node) throw new Error("Squeek Call is missing " + key);
@@ -47,9 +54,16 @@
   }
 
   let persist = true;
+  let session = null;
+  let deskBusy = false;
   let book = R.freshState();
   let tape = [];
   let live = null;
+  let settlements = null;
+  let stats = null;
+  let account = null;
+  const wireError = { settlements: "", stats: "", account: "" };
+  let wireKey = "";
   let seenFeed = false;
   let feedError = "";
   let hold = "";
@@ -66,12 +80,19 @@
   let lastSecond = null;
   let audioCtx = null;
 
+  function storageKey() {
+    return R.bookStorageKey(session && session.address) || R.STORAGE_KEY;
+  }
+
   function bootStore() {
+    const key = storageKey();
     try {
-      const raw = localStorage.getItem(R.STORAGE_KEY);
+      const raw = localStorage.getItem(key);
       if (raw) return R.normalize(JSON.parse(raw), Date.now());
-      const legacy = localStorage.getItem(R.LEGACY_KEY);
-      if (legacy) return R.importV1(JSON.parse(legacy));
+      if (key === R.STORAGE_KEY) {
+        const legacy = localStorage.getItem(R.LEGACY_KEY);
+        if (legacy) return R.importV1(JSON.parse(legacy));
+      }
       return R.freshState();
     } catch (err) {
       persist = false;
@@ -83,7 +104,7 @@
     book = state;
     if (!persist) return;
     try {
-      localStorage.setItem(R.STORAGE_KEY, JSON.stringify(state));
+      localStorage.setItem(storageKey(), JSON.stringify(state));
     } catch (err) {
       persist = false;
     }
@@ -92,11 +113,57 @@
   function readBook() {
     if (!persist) return book;
     try {
-      const raw = localStorage.getItem(R.STORAGE_KEY);
+      const raw = localStorage.getItem(storageKey());
       if (!raw) return book;
       return R.normalize(JSON.parse(raw), Date.now());
     } catch (err) {
       return book;
+    }
+  }
+
+  function adopt(state) {
+    book = state;
+    bookKey = "";
+    slipKey = "";
+    chipKey = "";
+    shownBank = null;
+  }
+
+  function pageUri() {
+    return window.location.origin + window.location.pathname;
+  }
+
+  function loadSession() {
+    try {
+      if (!window.SqueekRecover || !window.SqueekRecover.recoverAddress) return null;
+      const host = window.location.host;
+      if (!host) return null;
+      const raw = localStorage.getItem(R.SESSION_KEY);
+      if (!raw) return null;
+      const saved = JSON.parse(raw);
+      const accepted = R.acceptSession(saved, Date.now(), {
+        domain: host,
+        uri: pageUri(),
+      }, window.SqueekRecover.recoverAddress);
+      if (!accepted.ok) {
+        localStorage.removeItem(R.SESSION_KEY);
+        return null;
+      }
+      return accepted;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function saveSession(next) {
+    session = next;
+    try {
+      localStorage.setItem(R.SESSION_KEY, JSON.stringify({
+        message: next.message,
+        signature: next.signature,
+      }));
+    } catch (err) {
+      persist = false;
     }
   }
 
@@ -131,6 +198,12 @@
   function rpmText(milli) {
     if (milli == null || !Number.isFinite(Number(milli))) return "— rpm";
     return (Number(milli) / 1000).toFixed(2) + " rpm";
+  }
+
+  function when(value) {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   }
 
   function clock(value) {
@@ -394,9 +467,9 @@
     card.append(
       el("p", "slip-kicker", "Open book"),
       el("h2", "slip-title", "Twelve seconds"),
-      el("p", null, "Call RUNNING or IDLE. That chip leaves the stack until the clock finishes."),
-      el("p", null, "A hit pays the rate on the button. A miss takes the chip. If the feed has no side, the chip comes back."),
-      el("p", "slip-foot", "Settles on measurement.coreStatus from one fresh status read.")
+      el("p", null, "Call RUNNING or IDLE. That chip leaves the stack for twelve seconds."),
+      el("p", null, "A hit pays the rate on the button. A miss takes the chip. If the fresh status has no side, the chip comes back."),
+      el("p", "slip-foot", "Settles on measurement.coreStatus. Chain rounds stay on the clerk's copies.")
     );
     return card;
   }
@@ -410,7 +483,7 @@
       el("h2", "slip-title", open.choice),
       el("p", null, R.formatChips(open.stake) + " chips · hit returns " + R.formatChips(back) + " · " + R.formatRate(open.paysTenths)),
       el("p", null, "Tape was " + open.tapeIdle + " idle, " + open.tapeRun + " running" + (open.thin ? " · flat open" : "") + ". Locked until " + due + "."),
-      el("p", "slip-foot", "The spinner is the poll. The slip settles on a new fetch.")
+      el("p", "slip-foot", (open.signer ? "Signed " + R.shortAddress(open.signer) + ". " : "Unsigned book. ") + "The spinner is the poll. The slip settles on a new status fetch.")
     );
     return card;
   }
@@ -444,8 +517,11 @@
     if (slip.legacy) {
       return ["old score book", slip.side ? "side " + slip.side : "", slip.height ? "height " + slip.height : "", slip.rpmLabel ? slip.rpmLabel + " rpm" : "", clock(slip.fetchedAt)].filter(Boolean).join(" · ");
     }
+    const pollNote = slip.pollCore && slip.pollCore !== slip.coreStatus ? "poll " + slip.pollCore : "";
     return [
+      slip.signer ? "signed " + R.shortAddress(slip.signer) : "unsigned",
       "coreStatus " + (slip.coreStatus || "—"),
+      pollNote,
       slip.height ? "height " + slip.height : "",
       slip.rpmMilli != null ? rpmText(slip.rpmMilli) : "",
       slip.freshness || "",
@@ -467,8 +543,9 @@
   }
 
   function bookMetaText() {
-    if (!persist) return "This browser isn't keeping the book. Chips last until you close the tab.";
-    if (!book.slips.length) return "Book " + book.books + ". Chips stay in this browser until you clear site data.";
+    const who = session ? "Signed " + R.shortAddress(session.checksum || session.address) : "Unsigned book";
+    if (!persist) return who + ". This browser isn't keeping the book. Chips last until you close the tab.";
+    if (!book.slips.length) return who + ". Book " + book.books + ". Chips stay in this browser until you clear site data.";
     let hit = 0;
     let miss = 0;
     let back = 0;
@@ -478,6 +555,7 @@
       else back += 1;
     });
     const bits = [
+      who,
       "Book " + book.books,
       book.slips.length + (book.slips.length === 1 ? " slip" : " slips"),
       hit + (hit === 1 ? " hit" : " hits"),
@@ -539,6 +617,13 @@
           ["Settled through round", slip.settledThroughRound],
           ["Installation", slip.installationId],
           ["Tape", (slip.thin ? "flat open · " : "") + (slip.tapeIdle || 0) + " idle · " + (slip.tapeRun || 0) + " running"],
+          ["Signer", slip.signer],
+          ["Session nonce", slip.sessionNonce],
+          ["Poll coreStatus", slip.pollCore],
+          ["Poll observed", slip.pollObservedAt],
+          ["Settle URL", R.STATUS_URL],
+          ["Chain copy", contextLine(slip.context)],
+          ["7-day copy", measureLine(slip.context)],
           ["Locked", iso(slip.lockedAt)],
           ["Fetched", slip.fetchedAt],
         ];
@@ -558,8 +643,50 @@
     paintChips();
     paintSlip();
     paintBook();
+    paintDesk();
+    paintWire();
     syncClerk();
     paintHub(Date.now());
+  }
+
+  function contextLine(context) {
+    const row = context && context.settlement;
+    if (!row) return "";
+    return [
+      row.settlementCount != null ? row.settlementCount + " in " + (row.range || "the window") : "",
+      row.height ? "height " + row.height : "",
+      row.throughRound ? "through " + row.throughRound : "",
+      row.tx ? R.shortTx(row.tx) : "",
+    ].filter(Boolean).join(" · ");
+  }
+
+  function measureLine(context) {
+    const row = context && context.measure;
+    if (!row) return "";
+    const rate = R.formatBps(row.activeRateBps);
+    return [
+      row.range || "",
+      rate ? "active " + rate : "",
+      row.peakRpmMilli != null ? rpmText(Number(row.peakRpmMilli)) + " peak" : "",
+      row.roundSeconds != null ? "round " + row.roundSeconds + "s" : "",
+    ].filter(Boolean).join(" · ");
+  }
+
+  function paintDesk() {
+    const open = Boolean(book.open);
+    els.btnDesk.disabled = deskBusy || open;
+    if (session) {
+      const label = R.shortAddress(session.checksum || session.address) + " · leave";
+      els.btnDesk.textContent = label;
+      els.btnDesk.setAttribute("aria-pressed", "true");
+      els.btnDesk.setAttribute("aria-label", "Leave the signed book for " + (session.checksum || session.address));
+      els.deskLine.textContent = "Signed book for " + (session.checksum || session.address) + ". House chips on this browser, until " + when(session.expirationTime) + ".";
+    } else {
+      els.btnDesk.textContent = deskBusy ? "Waiting on the wallet…" : "Sign the desk";
+      els.btnDesk.setAttribute("aria-pressed", "false");
+      els.btnDesk.setAttribute("aria-label", "Sign in with Ethereum on Sepolia");
+      els.deskLine.textContent = "Unsigned book on this browser. Sign in on Sepolia to open that address's stack.";
+    }
   }
 
   function ensureAudio() {
@@ -746,9 +873,9 @@
     live = reading;
     const side = R.classifyCore(reading.coreStatus);
     if (!side) return;
-    const stamp = reading.observedAt || reading.generatedAt || reading.fetchedAt || "poll";
-    const bucket = Math.floor(Date.now() / 2000);
-    tape = R.pushTape(tape, { key: stamp + "@" + bucket, running: side === "RUNNING" });
+    const key = R.readingKey(reading);
+    if (!key) return;
+    tape = R.pushTape(tape, { key, running: side === "RUNNING" });
   }
 
   let polling = false;
@@ -799,9 +926,10 @@
     if (!claim || claim.action !== "fetch") return;
     paint();
     const reading = await fetchReading();
+    const context = R.contextStamp(settlements, stats);
     const applied = await withBook((cur) => {
       if (!cur.open || cur.open.n !== claimedN) return {};
-      const out = R.applyReading(cur, reading, Date.now());
+      const out = R.applyReading(cur, reading, Date.now(), context);
       if (!out.applied) return { state: out.state };
       return { state: out.state, slip: out.slip };
     });
@@ -850,6 +978,10 @@ function call(choice) {
       tapeRun: q.runCount,
       tapeIdle: q.idleCount,
       thin: q.thin,
+      signer: session && session.address,
+      sessionNonce: session && session.nonce,
+      pollCore: live && live.coreStatus,
+      pollObservedAt: live && (live.observedAt || live.generatedAt),
     });
     return out.ok ? { state: out.state } : {};
   }).then((result) => {
@@ -901,11 +1033,358 @@ function call(choice) {
     withBook((cur) => ({ state: { ...cur, muted: !cur.muted } })).then(() => paint());
   }
 
+  function randomNonce() {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let out = "";
+    for (let i = 0; i < bytes.length; i += 1) out += alphabet[bytes[i] % alphabet.length];
+    return out;
+  }
+
+  function friendlyWalletError(err) {
+    const code = err && err.code;
+    const msg = (err && (err.shortMessage || err.message)) || "";
+    if (code === 4001 || /user rejected|user denied/i.test(msg)) {
+      return "The wallet closed the request. The unsigned book is still open.";
+    }
+    if (/not on Sepolia/i.test(msg)) return "The desk signs on Sepolia, chain 11155111. The wallet did not switch.";
+    if (!msg) return "The wallet didn't finish sign-in.";
+    return msg.length > 180 ? msg.slice(0, 180) : msg;
+  }
+
+  async function ensureSepolia(provider) {
+    const want = "0xaa36a7";
+    const current = await provider.request({ method: "eth_chainId" });
+    if (String(current).toLowerCase() === want) return;
+    try {
+      await provider.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: want }],
+      });
+    } catch (err) {
+      const missing = err && (err.code === 4902 || /unrecognized chain/i.test(err.message || ""));
+      if (!missing) throw err;
+      await provider.request({
+        method: "wallet_addEthereumChain",
+        params: [{
+          chainId: want,
+          chainName: "Sepolia",
+          nativeCurrency: { name: "Sepolia Ether", symbol: "ETH", decimals: 18 },
+          rpcUrls: ["https://rpc.sepolia.org"],
+          blockExplorerUrls: ["https://sepolia.etherscan.io"],
+        }],
+      });
+    }
+    const after = await provider.request({ method: "eth_chainId" });
+    if (String(after).toLowerCase() !== want) throw new Error("The wallet is not on Sepolia.");
+  }
+
+  function openSignedBook(next) {
+    saveSession(next);
+    account = null;
+    wireError.account = "";
+    wireKey = "";
+    adopt(bootStore());
+    writeBook(book);
+  }
+
+  function leaveSignedBook() {
+    session = null;
+    account = null;
+    wireError.account = "";
+    wireKey = "";
+    try { localStorage.removeItem(R.SESSION_KEY); } catch (err) { persist = false; }
+    adopt(bootStore());
+  }
+
+  async function signIn() {
+    if (book.open || locking) {
+      hold = "This slip is still in escrow. Sign the desk after it settles.";
+      paint();
+      return;
+    }
+    if (session) {
+      leaveSignedBook();
+      hold = "Unsigned book. The signed stack stays under that address.";
+      paint();
+      return;
+    }
+    const provider = window.ethereum;
+    if (!provider || !provider.request) {
+      hold = "No wallet in this browser. The unsigned book still takes calls.";
+      paint();
+      return;
+    }
+    if (!window.SqueekRecover || !window.SqueekRecover.recoverAddress || !window.SqueekRecover.checksumAddress) {
+      hold = "The signature check didn't load. The unsigned book still takes calls.";
+      paint();
+      return;
+    }
+    const host = window.location.host;
+    if (!host || window.location.protocol === "file:") {
+      hold = "Open the page over http or https so the signature can name this host.";
+      paint();
+      return;
+    }
+    deskBusy = true;
+    paintDesk();
+    try {
+      const accounts = await provider.request({ method: "eth_requestAccounts" });
+      const address = R.normalizeAddress(accounts && accounts[0]);
+      if (!address) throw new Error("The wallet returned no account.");
+      await ensureSepolia(provider);
+      const checksum = window.SqueekRecover.checksumAddress(address);
+      const issued = new Date();
+      const message = R.buildSiwe({
+        domain: host,
+        address: checksum,
+        uri: pageUri(),
+        nonce: randomNonce(),
+        issuedAt: issued.toISOString(),
+        expirationTime: new Date(issued.getTime() + R.SESSION_MS).toISOString(),
+      });
+      if (!message) throw new Error("Could not build the sign-in message.");
+      const signature = await provider.request({
+        method: "personal_sign",
+        params: [utf8ToHex(message), checksum],
+      });
+      const accepted = R.acceptSession({ message, signature }, Date.now(), {
+        domain: host,
+        uri: pageUri(),
+      }, window.SqueekRecover.recoverAddress);
+      if (!accepted.ok) throw new Error("The signature did not match this host (" + accepted.error + ").");
+      openSignedBook(accepted);
+      hold = "Signed in. This stack belongs to " + R.shortAddress(accepted.checksum) + ". The unsigned book is still here when you leave.";
+      refreshAccount();
+    } catch (err) {
+      hold = friendlyWalletError(err);
+    } finally {
+      deskBusy = false;
+      paint();
+    }
+  }
+
+  function utf8ToHex(text) {
+    const bytes = new TextEncoder().encode(text);
+    let hex = "0x";
+    for (let i = 0; i < bytes.length; i += 1) hex += bytes[i].toString(16).padStart(2, "0");
+    return hex;
+  }
+
+  async function fetchJson(url) {
+    const ctrl = new AbortController();
+    const timer = window.setTimeout(() => ctrl.abort(), 8000);
+    try {
+      const res = await fetch(url, { cache: "no-store", signal: ctrl.signal });
+      if (!res.ok) return { http: res.status, body: null };
+      return { http: res.status, body: await res.json() };
+    } catch (err) {
+      return { http: 0, error: err && err.name === "AbortError" ? "timed out" : "failed", body: null };
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
+
+  async function refreshSettlements() {
+    const got = await fetchJson(R.SETTLEMENTS_URL);
+    if (got.body) {
+      const parsed = R.parseSettlements(got.body);
+      if (parsed.ok) {
+        settlements = parsed;
+        wireError.settlements = "";
+      } else {
+        settlements = null;
+        wireError.settlements = parsed.error || "unreadable";
+      }
+    } else {
+      wireError.settlements = got.http ? "HTTP " + got.http : (got.error || "failed");
+    }
+    paintWire();
+  }
+
+  async function refreshStats() {
+    const got = await fetchJson(R.STATS_URL);
+    if (got.body) {
+      const parsed = R.parseStats(got.body);
+      if (parsed.ok) {
+        stats = parsed;
+        wireError.stats = "";
+      } else {
+        stats = null;
+        wireError.stats = parsed.error || "unreadable";
+      }
+    } else {
+      wireError.stats = got.http ? "HTTP " + got.http : (got.error || "failed");
+    }
+    paintWire();
+  }
+
+  async function refreshAccount() {
+    if (!session) {
+      account = null;
+      wireError.account = "";
+      paintWire();
+      return;
+    }
+    const url = R.accountUrl(session.address);
+    const got = await fetchJson(url);
+    if (got.body) {
+      const parsed = R.parseAccount(got.body, session.address);
+      if (parsed.ok) {
+        account = parsed;
+        wireError.account = "";
+      } else {
+        account = null;
+        wireError.account = parsed.error || "unreadable";
+      }
+    } else {
+      account = null;
+      wireError.account = got.http ? "HTTP " + got.http : (got.error || "failed");
+    }
+    paintWire();
+  }
+
+  function fill(node, parts) {
+    node.replaceChildren();
+    parts.forEach((part) => { if (part) node.appendChild(part); });
+  }
+
+  function paintWire() {
+    const key = [
+      session && session.address,
+      wireError.settlements,
+      wireError.stats,
+      wireError.account,
+      settlements && settlements.generatedAt,
+      settlements && settlements.settlementCount,
+      stats && stats.generatedAt,
+      account && account.claimable,
+      account && account.walletSqueeks,
+    ].join("|");
+    if (key === wireKey) return;
+    wireKey = key;
+    fill(els.wireSettle, settlementView());
+    fill(els.wireStats, statsView());
+    fill(els.wireAccount, accountView());
+  }
+
+  function settlementView() {
+    const nodes = [
+      el("h3", null, "Settlements"),
+      el("p", "ep", "GET /v1/settlements?range=24h"),
+    ];
+    if (!settlements) {
+      nodes.push(el("p", null, wireError.settlements ? "No copy yet (" + wireError.settlements + ")." : "Reading the chain…"));
+      return nodes;
+    }
+    const count = settlements.settlementCount != null ? settlements.settlementCount : "—";
+    const chain = settlements.chainId ? "chain " + settlements.chainId : "chain unknown";
+    nodes.push(el("p", null, count + " in the window · " + chain + "."));
+    if (!settlements.recent.length) {
+      nodes.push(el("p", "quiet", "No block-completing settlement in the latest list."));
+    } else {
+      const list = el("ul", "copies");
+      settlements.recent.forEach((row) => {
+        const item = document.createElement("li");
+        item.append(document.createTextNode(
+          (clock(row.at) || "—") + " · height " + (row.height || "—") + " · rounds " +
+          (row.prevRound || "—") + "→" + (row.throughRound || "—") + " · "
+        ));
+        const href = R.explorerTx(row.tx);
+        if (href) {
+          const link = document.createElement("a");
+          link.href = href;
+          link.rel = "noopener";
+          link.target = "_blank";
+          link.textContent = R.shortTx(row.tx);
+          item.appendChild(link);
+        }
+        list.appendChild(item);
+      });
+      nodes.push(list);
+    }
+    nodes.push(el("p", "quiet", "SqueekCore batches" + (settlements.generatedAt ? " · copy " + clock(settlements.generatedAt) : "") + ". A slip does not read them to settle."));
+    return nodes;
+  }
+
+  function statsView() {
+    const nodes = [
+      el("h3", null, "Seven-day measure"),
+      el("p", "ep", "GET /v1/measurement/stats?range=7d"),
+    ];
+    if (!stats) {
+      nodes.push(el("p", null, wireError.stats ? "No copy yet (" + wireError.stats + ")." : "Reading the week…"));
+      return nodes;
+    }
+    const rate = R.formatBps(stats.activeRateBps);
+    const coverage = R.formatBps(stats.coverageBps);
+    const bits = [
+      rate ? "active rounds " + rate : "",
+      stats.peakRpmMilli != null ? "peak " + rpmText(Number(stats.peakRpmMilli)) : "",
+      stats.activeDays != null ? stats.activeDays + " active days" : "",
+      coverage ? "coverage " + coverage : "",
+    ].filter(Boolean);
+    nodes.push(el("p", null, bits.join(" · ") + "."));
+    const rounds = stats.roundSeconds != null ? "This window's roundSeconds is " + stats.roundSeconds + ". " : "";
+    nodes.push(el("p", "quiet", rounds + "The slip clock is 12 seconds. The tape still sets the price."));
+    return nodes;
+  }
+
+  function accountView() {
+    const nodes = [el("h3", null, "This address")];
+    if (!session) {
+      nodes.push(el("p", "ep", "GET /v1/accounts/{address}?limit=1"));
+      nodes.push(el("p", null, "Sign the desk and this copy reads that address at the safe block."));
+      nodes.push(el("p", "quiet", "House chips stay in this browser either way."));
+      return nodes;
+    }
+    nodes.push(el("p", "ep", "GET /v1/accounts/" + session.address + "?limit=1"));
+    if (!account) {
+      nodes.push(el("p", null, wireError.account ? "No account copy yet (" + wireError.account + ")." : "Reading the account…"));
+    } else {
+      const claim = account.claimable != null ? R.formatBaseUnits(account.claimable) : null;
+      nodes.push(el("p", null, [
+        "Wallet Squeeks " + (account.walletSqueeks || "0"),
+        "staking " + (account.stakingSqueeks || "0"),
+        claim != null ? "claimable " + claim + " SQK" : "",
+      ].filter(Boolean).join(" · ") + "."));
+      const power = [
+        account.nftPower != null ? "Squeek power " + account.nftPower : "",
+        account.sqkPower != null ? "SQK power " + account.sqkPower : "",
+        account.coreHeight ? "core height " + account.coreHeight : "",
+      ].filter(Boolean);
+      if (power.length) nodes.push(el("p", "quiet", power.join(" · ") + "."));
+    }
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = "Signed session";
+    const body = el("div");
+    body.append(
+      el("p", null, "Recovered " + (session.checksum || session.address) + ". Chain " + session.chainId + ". Nonce " + session.nonce + "."),
+      el("p", "quiet", "Signature " + String(session.signature || "").slice(0, 22) + "…"),
+      el("pre", null, session.message)
+    );
+    details.append(summary, body);
+    nodes.push(details);
+    nodes.push(el("p", "quiet", "Checked in this browser. The signature does not move SQK."));
+    return nodes;
+  }
+
+  function sessionStillGood() {
+    if (!session || book.open) return;
+    if (Date.parse(session.expirationTime) > Date.now()) return;
+    leaveSignedBook();
+    hold = "The signed session expired. This is the unsigned book.";
+    paint();
+  }
+
   els.btnRun.addEventListener("click", () => call("RUNNING"));
   els.btnIdle.addEventListener("click", () => call("IDLE"));
   els.btnBank.addEventListener("click", doBank);
   els.btnMute.addEventListener("click", toggleMute);
   els.btnReopen.addEventListener("click", doReopen);
+  els.btnDesk.addEventListener("click", () => { signIn(); });
 
   window.addEventListener("keydown", (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
@@ -935,8 +1414,16 @@ function call(choice) {
     }
   });
 
+  session = loadSession();
   writeBook(bootStore());
   paint();
+  refreshSettlements();
+  refreshStats();
+  refreshAccount();
+  window.setInterval(refreshSettlements, 60000);
+  window.setInterval(refreshStats, 180000);
+  window.setInterval(refreshAccount, 60000);
+  window.setInterval(sessionStillGood, 30000);
   if (book.open && (Date.now() >= book.open.deadline || book.open.phase === "settling")) {
     doSettle({ force: true });
   }

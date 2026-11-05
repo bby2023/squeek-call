@@ -138,6 +138,14 @@ h1 {
   padding: 0 .35rem;
 }
 
+.desk-line {
+  margin: .45rem 0 0;
+  max-width: 38rem;
+  color: var(--dim);
+  font-size: .75rem;
+  line-height: 1.45;
+}
+
 #btnBank, #btnMute {
   background: transparent;
   border: 0;
@@ -147,8 +155,25 @@ h1 {
   font-size: .75rem;
 }
 
-#btnBank:hover:not(:disabled), #btnMute:hover { color: var(--cream); }
-#btnBank:disabled { opacity: .35; }
+#btnDesk {
+  min-height: 44px;
+  padding: .35rem .75rem;
+  border-radius: 999px;
+  border: 1px solid rgba(203, 184, 146, .7);
+  background: transparent;
+  color: var(--cream);
+  font-size: .75rem;
+}
+
+#btnDesk[aria-pressed="true"] {
+  background: var(--paper);
+  color: var(--ink);
+  border-color: var(--paper);
+}
+
+#btnBank:hover:not(:disabled), #btnMute:hover, #btnDesk:hover:not(:disabled) { color: var(--cream); }
+#btnDesk[aria-pressed="true"]:hover:not(:disabled) { color: var(--ink); }
+#btnBank:disabled, #btnDesk:disabled { opacity: .45; }
 
 .clerk {
   min-height: 1.5em;
@@ -472,6 +497,101 @@ body[data-mode="bust"] .pit {
     "tape";
 }
 
+.wire {
+  margin-top: 1.35rem;
+}
+
+.wire-head h2 {
+  margin: 0;
+  font-family: "Instrument Serif", Georgia, serif;
+  font-weight: 400;
+  font-size: 1.8rem;
+}
+
+.wire-head p {
+  margin: .25rem 0 .7rem;
+  max-width: 42rem;
+  color: var(--dim);
+  font-size: .78rem;
+  line-height: 1.45;
+}
+
+.wire-head code { color: var(--cream); font-size: .92em; }
+
+.wire-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .7rem;
+}
+
+.ticket {
+  min-height: 9.5rem;
+  padding: .8rem .85rem .9rem;
+  border: 1px solid rgba(243, 230, 200, .18);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .03);
+}
+
+.ticket h3 {
+  margin: 0;
+  font-size: .68rem;
+  font-weight: 500;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.ticket .ep {
+  margin: .35rem 0 0;
+  color: var(--lamp);
+  font-size: .72rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.ticket p {
+  margin: .4rem 0 0;
+  font-size: .78rem;
+  line-height: 1.4;
+}
+
+.ticket .quiet {
+  color: var(--dim);
+  font-size: .72rem;
+}
+
+.ticket .copies {
+  list-style: none;
+  margin: .45rem 0 0;
+  padding: 0;
+}
+
+.ticket li {
+  margin: .28rem 0 0;
+  font-size: .75rem;
+  line-height: 1.35;
+}
+
+.ticket a { color: var(--cream); }
+
+.ticket pre {
+  margin: .45rem 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: .68rem;
+  color: var(--dim);
+  max-height: 9rem;
+  overflow: auto;
+}
+
+.ticket summary {
+  margin-top: .45rem;
+  cursor: pointer;
+  color: var(--dim);
+  font-size: .72rem;
+}
+
 .book {
   margin-top: 1.4rem;
   background: #efe2c6;
@@ -568,6 +688,7 @@ footer {
 }
 
 @media (max-width: 860px) {
+  .wire-grid { grid-template-columns: 1fr; }
   .pit {
     grid-template-columns: 1fr 1fr;
     grid-template-areas:
